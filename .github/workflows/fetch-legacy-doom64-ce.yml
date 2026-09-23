@@ -1,0 +1,34 @@
+name: fetch-legacy-doom64-ce
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/fetch-legacy-doom64-ce.yml
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve ModDB download
+        run: |
+          set -euxo pipefail
+          page=$(curl -fsSL 'https://www.moddb.com/mods/doom-ce/downloads/doom-ce-3101-lite-download')
+          start=$(printf '%s' "$page" | grep -oE 'https://www\.moddb\.com/downloads/start/[0-9]+' | head -1 || true)
+          if [ -z "$start" ]; then
+            start=$(printf '%s' "$page" | grep -oE '/downloads/start/[0-9]+' | head -1 | sed 's#^#https://www.moddb.com#' || true)
+          fi
+          echo "start=$start"
+          test -n "$start"
+          curl -L --fail --retry 5 --retry-delay 3 -o legacy.zip "$start"
+          unzip -q legacy.zip 'DOOM64.CE.ipk3' 'patcher/DOOM64.bps' 'doom64-install.bat'
+          mkdir -p kit
+          cp DOOM64.CE.ipk3 kit/
+          cp patcher/DOOM64.bps kit/
+          cp doom64-install.bat kit/
+          sha256sum kit/*
+          ls -lh kit/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doom64-ce-3.10.1-core
+          path: kit
+          retention-days: 1
+          compression-level: 0
