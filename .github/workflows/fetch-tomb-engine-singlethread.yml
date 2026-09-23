@@ -1,0 +1,25 @@
+name: fetch-tomb-engine-singlethread
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/fetch-tomb-engine-singlethread.yml
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set -euxo pipefail
+          mkdir -p engine
+          base='https://raw.githubusercontent.com/mungus43/tomb-engine/main/demo'
+          for f in gzdoom.js gzdoom.wasm engine.worker.js gzdoom.pk3 game_support.pk3 brightmaps.pk3 lights.pk3 game_widescreen_gfx.pk3 index-singlethread.html; do
+            curl -L --fail --retry 5 --retry-delay 2 -o "engine/$f" "$base/$f"
+          done
+          ls -lh engine
+          sha256sum engine/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tomb-engine-singlethread
+          path: engine
+          retention-days: 1
+          compression-level: 0
