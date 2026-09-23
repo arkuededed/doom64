@@ -1,0 +1,23 @@
+name: fetch-doom64-ce
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fetch-ce.yml
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download DOOM 64 CE package
+        run: |
+          set -e
+          curl -L --fail --retry 5 --retry-delay 5 \
+            -o DOOM64.CE-4.0.0.zip \
+            https://github.com/arkuededed/doom64/releases/download/doomce/DOOM64.CE-4.0.0.zip
+          ls -lh DOOM64.CE-4.0.0.zip
+      - name: Upload package as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: doom64-ce-package
+          path: DOOM64.CE-4.0.0.zip
+          retention-days: 1
