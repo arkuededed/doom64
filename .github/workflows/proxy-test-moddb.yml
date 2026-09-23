@@ -1,0 +1,16 @@
+name: proxy-test-moddb
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/proxy-test-moddb.yml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set -euxo pipefail
+          url='https://api.allorigins.win/raw?url=https%3A%2F%2Fwww.moddb.com%2Fdownloads%2Fstart%2F276168'
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' -o /tmp/a "$url"
+          file /tmp/a
+          ls -lh /tmp/a
