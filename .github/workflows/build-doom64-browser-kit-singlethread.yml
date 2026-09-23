@@ -1,0 +1,52 @@
+name: build-doom64-browser-kit-singlethread
+on:
+  push:
+    paths:
+      - .github/workflows/build-doom64-browser-kit-singlethread.yml
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+      - name: Clone UZDoom WASM source
+        run: git clone --depth 1 https://github.com/abootnet/uzdoom-wasm.git wasm-src
+      - name: Make web build single-threaded
+        working-directory: wasm-src
+        run: |
+          set -e
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('cmake/Emscripten.overrides.cmake')
+          s=p.read_text()
+          s=s.replace('set(_EMSC_COMMON "-pthread -sUSE_SDL=2 -sUSE_PTHREADS=1 -fexceptions")',
+                      'set(_EMSC_COMMON "-sUSE_SDL=2 -fexceptions")')
+          s=s.replace('  "-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency"\n','')
+          s=s.replace('  "-sDEFAULT_PTHREAD_STACK_SIZE=1MB"\n','')
+          p.write_text(s)
+          print('single-threaded overrides applied')
+          PY
+      - name: Build UZDoom WASM
+        working-directory: wasm-src
+        run: |
+          set -e
+          docker build --target builder -t uzdoom-wasm-singlethread .
+          cid=$(docker create uzdoom-wasm-singlethread)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          mkdir -p ../kit/engine
+          for f in uzdoom.js uzdoom.wasm uzdoom.data uzdoom-loader.js uzdoom-melt.js uzdoom.pk3 game_support.pk3 brightmaps.pk3 lights.pk3 game_widescreen_gfx.pk3; do
+            docker cp "$cid:/src/build-wasm/$f" "../kit/engine/$f"
+          done
+          docker cp "$cid:/src/build-wasm/soundfonts/uzdoom.sf2" ../kit/engine/uzdoom.sf2
+          test -s ../kit/engine/uzdoom.wasm
+          grep -ao 'SharedArrayBuffer' ../kit/engine/uzdoom.js | head || true
+          ls -lh ../kit/engine
+      - name: Upload engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: doom64-engine-singlethread
+          path: kit/engine
+          retention-days: 1
+          compression-level: 0
