@@ -1,0 +1,26 @@
+name: inspect-doom64-ce
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/inspect-ce.yml
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download CE package
+        run: |
+          set -e
+          curl -L --fail --retry 5 --retry-delay 5 -o ce.zip             https://github.com/arkuededed/doom64/releases/download/doomce/DOOM64.CE-4.0.0.zip
+      - name: List package contents
+        run: |
+          unzip -l ce.zip > contents.txt
+          grep -Ei 'doom64|uzdoom|zdoom|\\.(bps|ipk3|wad|pk3|wasm|js|data)$' contents.txt | head -300 || true
+          echo "---- TOP LEVEL ----"
+          unzip -Z1 ce.zip | awk -F/ 'NF{print $1}' | sort -u | head -100
+      - name: Upload contents list
+        uses: actions/upload-artifact@v4
+        with:
+          name: ce-contents
+          path: contents.txt
+          retention-days: 1
