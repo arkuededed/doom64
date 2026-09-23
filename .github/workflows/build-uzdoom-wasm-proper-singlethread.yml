@@ -1,0 +1,99 @@
+name: build-uzdoom-wasm-proper-singlethread
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/build-uzdoom-wasm-proper-singlethread.yml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Clone UZDoom WASM
+        run: git clone --depth 1 https://github.com/abootnet/uzdoom-wasm.git src
+      - name: Patch out all runtime thread creation
+        working-directory: src
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          
+          # Emscripten: do not compile/link pthread support.
+          p=Path('cmake/Emscripten.overrides.cmake')
+          s=p.read_text()
+          s=s.replace('set(_EMSC_COMMON "-pthread -sUSE_SDL=2 -sUSE_PTHREADS=1 -fexceptions")',
+                      'set(_EMSC_COMMON "-sUSE_SDL=2 -fexceptions")')
+          s=s.replace('  "-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency"\n','')
+          s=s.replace('  "-sDEFAULT_PTHREAD_STACK_SIZE=1MB"\n','')
+          p.write_text(s)
+          
+          # Discord: never start its IO thread in a browser build.
+          p=Path('CMakeLists.txt')
+          s=p.read_text()
+          s=s.replace('set(UZDOOM_WASM_STUB_DISCORD ON CACHE BOOL "Skip Discord RPC integration")',
+                      'set(UZDOOM_WASM_STUB_DISCORD ON CACHE BOOL "Skip Discord RPC integration")')
+          p.write_text(s)
+          
+          # Software drawer queue: execute commands synchronously on the main thread.
+          p=Path('src/common/rendering/r_thread.cpp')
+          s=p.read_text()
+          a=s.index('void DrawerThreads::Execute(')
+          b=s.index('void DrawerThreads::ResetDebugDrawPos()', a)
+          new='''void DrawerThreads::Execute(DrawerCommandQueuePtr commands)\n{\n\tif (!commands || commands->commands.empty()) return;\n\tauto queue = Instance();\n\tfor (auto command : commands->commands)\n\t{\n\t\tcommand->Execute(&queue->single_core_thread);\n\t\tcommand->~DrawerCommand();\n\t}\n\tcommands->commands.clear();\n}\n\nvoid DrawerThreads::WaitForWorkers()\n{\n}\n\n'''
+          # Remove the first Execute + WaitForWorkers pair, then leave ResetDebugDrawPos.
+          s=s[:a]+new+s[b:]
+          # Replace StartThreads/StopThreads with empty functions so no std::thread is ever constructed.
+          a=s.index('void DrawerThreads::StartThreads()')
+          b=s.index('void DrawerThreads::StopThreads()', a)
+          s=s[:a]+'void DrawerThreads::StartThreads()\n{\n}\n\n'+s[b:]
+          a=s.index('void DrawerThreads::StopThreads()')
+          b=s.index('void DrawerThreads::WorkerMain', a)
+          s=s[:a]+'void DrawerThreads::StopThreads()\n{\n}\n\n'+s[b:]
+          p.write_text(s)
+          
+          # Software scene renderer: keep exactly one render thread object (the main thread), never spawn helpers.
+          p=Path('src/rendering/swrenderer/scene/r_scene.cpp')
+          s=p.read_text()
+          old='int numThreads = std::thread::hardware_concurrency();\n\t\tif (numThreads == 0)\n\t\t\tnumThreads = 1;'
+          s=s.replace(old,'int numThreads = 1;',1)
+          a=s.index('void RenderScene::StartThreads(size_t numThreads)')
+          b=s.index('void RenderScene::StopThreads()', a)
+          s=s[:a]+'void RenderScene::StartThreads(size_t numThreads)\n{\n\t(void)numThreads;\n}\n\n'+s[b:]
+          a=s.index('void RenderScene::StopThreads()')
+          b=s.index('void RenderScene::RenderViewToCanvas', a)
+          s=s[:a]+'void RenderScene::StopThreads()\n{\n}\n\n'+s[b:]
+          p.write_text(s)
+          PY
+          
+          # Make sure no executable std::thread(...) call remains in the relevant UZDoom renderer/engine sources.
+          ! grep -RIn --include='*.cpp' --include='*.h' 'std::thread(' src/common/rendering/r_thread.cpp src/rendering/swrenderer/scene/r_scene.cpp
+          
+      - name: Build
+        working-directory: src
+        run: |
+          set -euxo pipefail
+          docker build --target builder -t uzdoom-wasm-proper-singlethread .
+          cid=$(docker create uzdoom-wasm-proper-singlethread)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          mkdir -p ../engine
+          for f in uzdoom.js uzdoom.wasm uzdoom.data uzdoom.pk3 game_support.pk3 brightmaps.pk3 lights.pk3 game_widescreen_gfx.pk3; do
+            docker cp "$cid:/src/build-wasm/$f" "../engine/$f"
+          done
+          cp /src/web/uzdoom-loader.js ../engine/ 2>/dev/null || true
+          cp /src/web/uzdoom-melt.js ../engine/ 2>/dev/null || true
+          cp /src/web/shell.html ../engine/ 2>/dev/null || true
+          docker cp "$cid:/src/build-wasm/uzdoom-loader.js" ../engine/uzdoom-loader.js
+          docker cp "$cid:/src/build-wasm/uzdoom-melt.js" ../engine/uzdoom-melt.js
+          docker cp "$cid:/src/build-wasm/soundfonts/uzdoom.sf2" ../engine/uzdoom.sf2
+          ls -lh ../engine
+      - name: Verify wasm does not require shared memory imports
+        run: |
+          set -euxo pipefail
+          strings engine/uzdoom.wasm | grep -E 'atomics\.(wait|notify)|memory.atomic' && exit 2 || true
+          grep -ao 'SharedArrayBuffer' engine/uzdoom.js | head -5 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doom64-engine-proper-singlethread
+          path: engine
+          retention-days: 1
+          compression-level: 0
