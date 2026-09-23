@@ -8,10 +8,15 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Download ModDB archive
+      - name: Download ModDB archive with browser headers
         run: |
           set -euxo pipefail
-          curl -L --fail --retry 5 --retry-delay 3 -o legacy.zip 'https://www.moddb.com/downloads/start/276166'
+          curl -L --fail --retry 8 --retry-delay 4 --compressed \
+            -A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153.0.0.0 Safari/537.36' \
+            -e 'https://www.moddb.com/downloads/doom-64-ce-3101-full-download' \
+            -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' \
+            -o legacy.zip 'https://www.moddb.com/downloads/start/276168'
+          file legacy.zip
           unzip -q legacy.zip 'DOOM64.CE.ipk3' 'patcher/DOOM64.bps' 'doom64-install.bat'
           mkdir -p kit
           cp DOOM64.CE.ipk3 kit/
