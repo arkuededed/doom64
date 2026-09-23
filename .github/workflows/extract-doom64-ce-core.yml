@@ -1,0 +1,27 @@
+name: extract-doom64-ce-core
+on:
+  push:
+    paths:
+      - .github/workflows/extract-doom64-ce-core.yml
+  workflow_dispatch:
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set -e
+          curl -L --fail --retry 5 --retry-delay 5 -o ce.zip             https://github.com/arkuededed/doom64/releases/download/doomce/DOOM64.CE-4.0.0.zip
+          unzip -q ce.zip 'DOOM64.CE.ipk3' 'patcher/DOOM64.bps' 'uzdoom.pk3' 'game_support.pk3' 'brightmaps.pk3' 'lights.pk3' 'game_widescreen_gfx.pk3' 'soundfonts/uzdoom.sf2'
+          mkdir -p kit
+          cp DOOM64.CE.ipk3 kit/
+          cp patcher/DOOM64.bps kit/
+          cp uzdoom.pk3 game_support.pk3 brightmaps.pk3 lights.pk3 game_widescreen_gfx.pk3 kit/
+          mkdir -p kit/soundfonts
+          cp soundfonts/uzdoom.sf2 kit/soundfonts/
+          ls -lh kit kit/soundfonts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doom64-ce-core
+          path: kit
+          retention-days: 1
+          compression-level: 0
