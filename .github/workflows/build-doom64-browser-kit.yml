@@ -1,0 +1,73 @@
+name: build-doom64-browser-kit
+on:
+  push:
+    paths:
+      - .github/workflows/build-doom64-browser-kit.yml
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Download DOOM64 CE package
+        run: |
+          set -e
+          curl -L --fail --retry 5 --retry-delay 5 -o ce.zip             https://github.com/arkuededed/doom64/releases/download/doomce/DOOM64.CE-4.0.0.zip
+          unzip -q ce.zip -d ce
+          mkdir -p kit/ce
+          cp 'ce/DOOM64.CE.ipk3' kit/ce/
+          cp 'ce/patcher/DOOM64.bps' kit/ce/
+          cp 'ce/uzdoom.pk3' kit/ce/
+          cp 'ce/game_support.pk3' kit/ce/
+          cp 'ce/brightmaps.pk3' kit/ce/
+          cp 'ce/lights.pk3' kit/ce/
+          cp 'ce/game_widescreen_gfx.pk3' kit/ce/
+          cp 'ce/soundfonts/uzdoom.sf2' kit/ce/
+          cp 'ce/fm_banks/GENMIDI.GS.wopl' kit/ce/ 2>/dev/null || true
+          find kit/ce -type f -printf '%p %s bytes\n'
+
+      - name: Clone UZDoom WASM port
+        run: git clone --depth 1 https://github.com/abootnet/uzdoom-wasm.git wasm-src
+
+      - name: Build UZDoom WASM using upstream Dockerfile
+        working-directory: wasm-src
+        run: |
+          set -e
+          docker build --target builder -t uzdoom-wasm-builder .
+          cid=$(docker create uzdoom-wasm-builder)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          mkdir -p ../kit/engine
+          docker cp "$cid:/src/build-wasm/uzdoom.js" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/uzdoom.wasm" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/uzdoom.data" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/uzdoom-loader.js" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/uzdoom-melt.js" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/uzdoom.pk3" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/game_support.pk3" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/brightmaps.pk3" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/lights.pk3" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/game_widescreen_gfx.pk3" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/soundfonts/uzdoom.sf2" ../kit/engine/
+          docker cp "$cid:/src/build-wasm/fm_banks" ../kit/engine/ || true
+          find ../kit/engine -type f -printf '%p %s bytes\n'
+
+      - name: Verify artifacts are complete
+        run: |
+          set -e
+          test -s kit/ce/DOOM64.CE.ipk3
+          test -s kit/ce/DOOM64.bps
+          test -s kit/engine/uzdoom.js
+          test -s kit/engine/uzdoom.wasm
+          test -s kit/engine/uzdoom.data
+          test -s kit/engine/uzdoom-loader.js
+
+      - name: Upload browser kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: doom64-browser-kit
+          path: kit
+          retention-days: 1
+          compression-level: 0
