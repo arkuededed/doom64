@@ -1,0 +1,65 @@
+name: build-uzdoom-wasm-no-threads
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/build-uzdoom-wasm-no-threads.yml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone UZDoom WASM port
+        run: git clone --depth 1 https://github.com/abootnet/uzdoom-wasm.git wasm-src
+      - name: Remove pthread link flags and runtime enablement
+        working-directory: wasm-src
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          reps = [
+            ('cmake/Emscripten.overrides.cmake', 'set(_EMSC_COMMON "-pthread -sUSE_SDL=2 -sUSE_PTHREADS=1 -fexceptions")',
+             'set(_EMSC_COMMON "-sUSE_SDL=2 -fexceptions")'),
+            ('cmake/Emscripten.overrides.cmake', '  "-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency"\n', ''),
+            ('cmake/Emscripten.overrides.cmake', '  "-sDEFAULT_PTHREAD_STACK_SIZE=1MB"\n', ''),
+          ]
+          for fn, a, b in reps:
+            p=Path(fn); s=p.read_text(); s=s.replace(a,b); p.write_text(s)
+          # Remove remaining explicit -pthread link/compile options from in-tree CMake.
+          for p in Path('.').rglob('CMakeLists.txt'):
+            s=p.read_text(errors='ignore')
+            ns=s.replace('add_link_options(-pthread)','')
+
+            ns=ns.replace('INTERFACE_COMPILE_OPTIONS "-pthread"','INTERFACE_COMPILE_OPTIONS ""')
+            ns=ns.replace('INTERFACE_LINK_OPTIONS "-pthread"','INTERFACE_LINK_OPTIONS ""')
+            ns=ns.replace('target_compile_options(discord-rpc PRIVATE\n        -Wall','target_compile_options(discord-rpc PRIVATE\n        -Wall')
+            # remove standalone pthread token in target_link_libraries lines
+            if ns != s: p.write_text(ns)
+          PY
+          # Show remaining CMake pthread references.
+          grep -RIn --include='CMakeLists.txt' --include='*.cmake' -- '-pthread\|USE_PTHREADS' . || true
+      - name: Build
+        working-directory: wasm-src
+        run: |
+          set -euo pipefail
+          docker build --target builder -t uzdoom-wasm-nothreads .
+          cid=$(docker create uzdoom-wasm-nothreads)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          mkdir -p ../kit
+          for f in uzdoom.js uzdoom.wasm uzdoom.data uzdoom-loader.js uzdoom-melt.js uzdoom.pk3 game_support.pk3 brightmaps.pk3 lights.pk3 game_widescreen_gfx.pk3; do
+            docker cp "$cid:/src/build-wasm/$f" "../kit/$f"
+          done
+          ls -lh ../kit
+          echo '--- shared-memory check ---'
+          if grep -q 'shared:true' ../kit/uzdoom.js; then
+            echo 'ERROR: generated JS still requests SharedArrayBuffer'
+            exit 2
+          fi
+          echo 'No shared:true marker found'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uzdoom-wasm-no-threads
+          path: kit
+          retention-days: 1
+          compression-level: 0
